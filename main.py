@@ -22,7 +22,7 @@ def dispatcher(env, interval_rate, service_rate, no_jobs, quan_times, k, dispatc
     cpu = CPU(env, quan_times)
     for i in range(no_jobs):
         # create random numbers accordingly
-        priority = np.random.choice([1, 2, 3], 1, p=[0.1, 0.2, 0.7])[0]
+        priority = np.random.choice([3, 2, 1], 1, p=[0.1, 0.2, 0.7])[0]
         service_time = np.random.exponential(service_rate)
         until_next = np.random.exponential(interval_rate)
 
