@@ -20,7 +20,6 @@ class CPU:
 def dispatcher(env, interval_rate, service_rate, no_jobs, quan_times, k, dispatch_rate, simulation_time):
     counters = [0 for _ in range(simulation_time // dispatch_rate)]
     cpu = CPU(env, quan_times)
-    jobs = queue.PriorityQueue()
     for i in range(no_jobs):
         # create random numbers accordingly
         priority = np.random.choice([1, 2, 3], 1, p=[0.1, 0.2, 0.7])[0]
