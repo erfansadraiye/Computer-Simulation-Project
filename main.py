@@ -21,9 +21,7 @@ class CPU:
             yield self.env.timeout(to_process)
 
 
-def job_source(env, interval_rate, service_rate, no_jobs, quan_times, k, dispatch_rate, simulation_time):
-    # DispatchLode = namedtuple()
-    counters = [0 for _ in range(simulation_time // dispatch_rate)]
+def job_source(env, interval_rate, service_rate, no_jobs, quan_times, k, transfer_rate, simulation_time):
     cpu = CPU(env, quan_times)
     for i in range(no_jobs):
         # create random numbers accordingly
@@ -31,54 +29,50 @@ def job_source(env, interval_rate, service_rate, no_jobs, quan_times, k, dispatc
         service_time = np.random.exponential(service_rate)
         until_next = np.random.exponential(interval_rate)
 
-        # fetch next not-full dispatch
-        next_dispatch = get_dispatch_time(counters, dispatch_rate, env, k, priority)
-
+        # fetch next not-full transfer time
+        next_transfer = get_transfer_time(transfer_rate, env, priority, env.now)
         # process job
-        j = job_creator(i, env, service_time, cpu, k, dispatch_rate, next_dispatch - env.now, priority)
+        j = job_creator(i, env, service_time, cpu, k, transfer_rate, next_transfer - env.now, priority, env.now)
         env.process(j)
 
         yield env.timeout(until_next)
 
 
-def get_dispatch_time(counters, dispatch_rate, env, k, priority):
-    cnt = int((env.now // dispatch_rate) + 1)
-    while (counters[cnt] > k) and (cnt < len(counters)):
-        cnt += 1
-    # next dispatch will be release a few milliseconds with delay relative to their priority
-    next_dispatch = cnt * dispatch_rate
-    next_dispatch += 0.001 * (priority - 1) / dispatch_rate
-    next_dispatch += 0.00001 * round((env.now - next_dispatch + dispatch_rate) / dispatch_rate, 2)
-    return next_dispatch
+def get_transfer_time(transfer_rate, env, priority, created_at):
+    cnt = int((env.now // transfer_rate) + 1)
+    next_transfer = cnt * transfer_rate
+    priority_schedule = round((0.5 ** priority) / transfer_rate, 3)
+    arrival_schedule = max(round(0.5 ** round(1 + ((next_transfer - created_at) / transfer_rate), 4) / transfer_rate, 10), 0)
+    next_transfer += priority_schedule + arrival_schedule
+    return next_transfer
 
 
 """
     priority policy:
-        - if there is any leftovers from previous dispatch, they should go first
-        - if all jobs from previous dispatches are done, then dispatch based on priority
-        - if two jobs have arrival difference less than 1; then dispatch based on priority
+        - if a 
+        - the further we are from a task creation time, the higher it will be prioritized after each transfer
+        - 
 """
 
 
-def print_stuff(time_stamp: object, job_id: object, message: object) -> object:
+def print_stuff(time_stamp, job_id, message):
     print('----------------\n', 'TIMESTAMP:', time_stamp, '\n', 'JOB ID: ', job_id)
     print(message)
 
 
-def job_creator(job_id, env, s_time, cpu, k, dispatch_rate, until_next_dispatch, priority):
+def job_creator(job_id, env, s_time, cpu, k, transfer_rate, until_next_transfer, priority, created_at):
     start = env.now
     print_stuff(env.now, job_id,
-                'JOB CREATED with priority ' + str(priority) + ' dispatch time: ' + str(until_next_dispatch + start))
+                'JOB SCHEDULED with priority ' + str(priority) + ' for transfer time: ' + str(
+                    until_next_transfer + start) + ' creation time: ' + str(created_at) + ' service time: ' + str(s_time))
 
     # wait until dispatch
-    yield env.timeout(until_next_dispatch)
+    yield env.timeout(until_next_transfer)
 
     if cpu.get_cnt() < k:
-
         # Priority Queue
         with cpu.pq.request(priority=priority) as pqreq:
             yield pqreq
-            print_stuff(env.now, job_id, 'exited PQ')
 
         # Round-Robin-T1 queue enter on dispatch
         with cpu.r1.request() as r1req:
@@ -97,7 +91,7 @@ def job_creator(job_id, env, s_time, cpu, k, dispatch_rate, until_next_dispatch,
                 to_process = min([s_time, cpu.r2.q_time])
                 yield env.process(cpu.dispatcher(to_process, 2))
                 s_time -= to_process
-                print_stuff(env.now, job_id, 'R1 QUEUE SUCCESSFUL')
+                print_stuff(env.now, job_id, 'R2 QUEUE SUCCESSFUL')
 
         if s_time > 0:
             # FCFS queue
@@ -108,19 +102,23 @@ def job_creator(job_id, env, s_time, cpu, k, dispatch_rate, until_next_dispatch,
                 print_stuff(env.now, job_id, 'FCFS QUEUE SUCCESSFUL')
 
     else:
-        env.process(job_creator(env, s_time, cpu, k, dispatch_rate, dispatch_rate))
+        new_transfer = get_transfer_time(transfer_rate, env, priority, created_at)
+        print_stuff(env.now, job_id, 'JOB RESCHEDULING')
+        yield env.process(
+            job_creator(job_id, env, s_time, cpu, k, transfer_rate, new_transfer - env.now, priority, created_at)
+        )
 
 
 if __name__ == '__main__':
-    simulation_time = 100
-    no_of_jobs = 10
+    simulation_time = 1000
+    no_of_jobs = 50
     x = 2
-    y = 3
+    y = 30
     z = 10
     job_deploy_rate = 2
     k = 10
-    t1 = 10
-    t2 = 20
+    t1 = 5
+    t2 = 10
     env = simpy.Environment()
     env.process(job_source(env, x, y, no_of_jobs, [t1, t2], k, job_deploy_rate, simulation_time))
     env.run(until=simulation_time)
