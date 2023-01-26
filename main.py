@@ -1,4 +1,5 @@
 import queue
+from collections import namedtuple
 
 import numpy as np
 import simpy
@@ -18,29 +19,31 @@ class CPU:
 
 
 def dispatcher(env, interval_rate, service_rate, no_jobs, quan_times, k, dispatch_rate, simulation_time):
+    # DispatchLode = namedtuple()
     counters = [0 for _ in range(simulation_time // dispatch_rate)]
     cpu = CPU(env, quan_times)
     for i in range(no_jobs):
         # create random numbers accordingly
-        priority = np.random.choice([3, 2, 1], 1, p=[0.1, 0.2, 0.7])[0]
+        priority = np.random.choice([1, 2, 3], 1, p=[0.1, 0.2, 0.7])[0]
         service_time = np.random.exponential(service_rate)
         until_next = np.random.exponential(interval_rate)
 
         # fetch next not-full dispatch
-        next_dispatch = get_dispatch_time(counters, dispatch_rate, env, k)
+        next_dispatch = get_dispatch_time(counters, dispatch_rate, env, k, priority)
 
         # process job
-        j = job_creator(i, env, service_time, cpu, k, dispatch_rate, next_dispatch - env.now, int(env.now) - priority)
+        j = job_creator(i, env, service_time, cpu, k, dispatch_rate, next_dispatch - env.now, - env.now)
         env.process(j)
 
         yield env.timeout(until_next)
 
 
-def get_dispatch_time(counters, dispatch_rate, env, k):
+def get_dispatch_time(counters, dispatch_rate, env, k, priority):
     cnt = int((env.now // dispatch_rate) + 1)
     while (counters[cnt] > k) and (cnt < len(counters)):
         cnt += 1
-    next_dispatch = cnt * dispatch_rate
+    # next dispatch will be release a few milliseconds with delay relative to their priority
+    next_dispatch = cnt * dispatch_rate + 0.00001 * (priority - 1) / dispatch_rate
     return next_dispatch
 
 
@@ -65,8 +68,7 @@ def job_creator(job_id, env, s_time, cpu, k, dispatch_rate, until_next_dispatch,
         # Priority Queue
         with cpu.pq.request(priority=priority) as pqreq:
             yield pqreq
-            print('exited PQ', job_id)
-
+            print('exited PQ', job_id, len(cpu.pq.queue))
         # Round-Robin-T1 queue enter on dispatch
         with cpu.r1.request() as r1req:
             print('----------------\n', 'TIMESTAMP:', env.now, '\n', 'JOB ID: ', job_id)
@@ -101,7 +103,7 @@ def job_creator(job_id, env, s_time, cpu, k, dispatch_rate, until_next_dispatch,
 
 if __name__ == '__main__':
     simulation_time = 100
-    no_of_jobs = 5
+    no_of_jobs = 10
     x = 2
     y = 3
     z = 10
@@ -111,4 +113,4 @@ if __name__ == '__main__':
     t2 = 20
     env = simpy.Environment()
     env.process(dispatcher(env, x, y, no_of_jobs, [t1, t2], k, job_deploy_rate, simulation_time))
-    env.run(until=1000)
+    env.run(until=simulation_time)
