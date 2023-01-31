@@ -1,58 +1,131 @@
 import numpy as np
 import simpy
+import heapq
+
+
+class Job:
+    def __init__(self, id, created_time, service_time, priority, life_time):
+        self.id = id
+        self.created_time = created_time
+        self.service_time = service_time
+        self.priority = priority
+        self.life_time = life_time
+
+    def __lt__(self, other):
+        return (self.created_time * 0.01 + self.priority) < (other.created_time * 0.01 + other.priority)
 
 
 class CPU:
     def __init__(self, env, quan_times):
         self.env = env
-        self.pq = simpy.PriorityResource(env)
-        self.r1 = simpy.Resource(env)
-        self.r2 = simpy.Resource(env)
-        self.fcfs = simpy.Resource(env)
-        self.cpu_core = simpy.PriorityResource(env)
-        self.r1.q_time, self.r2.q_time = quan_times
+        self.pq = []
+        self.r1 = []
+        self.r2 = []
+        self.fcfs = []
+        heapq.heapify(self.pq)
+        heapq.heapify(self.r1)
+        heapq.heapify(self.r2)
+        heapq.heapify(self.fcfs)
+        self.cpu_core = simpy.Resource(env, capacity=1)
+        self.r1_q_time, self.r2_q_time = quan_times
 
-    def get_cnt(self):
-        return len(self.r1.queue) + len(self.r2.queue) + len(self.fcfs.queue)
+    def dispatcher(self):
+        while True:
+            random_order = np.random.choice([0, 1, 2], 1, p=[0.8, 0.1, 0.1])[0]
+            if len(self.r1) != 0 and random_order == 0:
+                job = heapq.heappop(self.r1)
+                with self.cpu_core.request() as request:
+                    yield request
+                    print_stuff(env.now, job.id, 'Start Process from R1')
 
-    def dispatcher(self, to_process, priority):
-        with self.cpu_core.request(priority=priority) as core_req:
-            yield core_req
-            yield self.env.timeout(to_process)
+                    if job.service_time < self.r1_q_time:
+                        yield env.timeout(job.service_time)
+                    else:
+                        yield env.timeout(self.r1_q_time)
+                        job.service_time -= self.r1_q_time
+                        if job.service_time != 0:
+                            heapq.heappush(self.r2, job)
+                            print_stuff(env.now, job.id, 'R2 QUEUE ENTRANCE')
+                    print_stuff(env.now, job.id, 'Success Process from R1')
+
+            elif len(self.r2) != 0 and random_order == 1:
+                job = heapq.heappop(self.r2)
+                with self.cpu_core.request() as request:
+                    yield request
+                    print_stuff(env.now, job.id, 'Start Process from R2')
+                    if job.service_time < self.r2_q_time:
+                        yield env.timeout(job.service_time)
+                    else:
+                        yield env.timeout(self.r2_q_time)
+                        job.service_time -= self.r2_q_time
+                        if job.service_time != 0:
+                            heapq.heappush(self.fcfs, job)
+                            print_stuff(env.now, job.id, 'FCFS QUEUE ENTRANCE')
+                    print_stuff(env.now, job.id, 'Success Process from R2')
+
+            elif len(self.fcfs) != 0 and random_order == 2:
+                job = heapq.heappop(self.fcfs)
+                with self.cpu_core.request() as request:
+                    yield request
+                    print_stuff(env.now, job.id, 'Start Process from FCFS')
+                    yield env.timeout(job.service_time)
+                    print_stuff(env.now, job.id, 'Success Process from FCFS')
 
 
-def job_source(env, interval_rate, service_rate, no_jobs, quan_times, k, transfer_rate, simulation_time):
-    cpu = CPU(env, quan_times)
+def job_source(env, interval_rate, service_rate, dead_rate, no_jobs, cpu):
     for i in range(no_jobs):
         # create random numbers accordingly
         priority = np.random.choice([1, 2, 3], 1, p=[0.1, 0.2, 0.7])[0]
-        service_time = np.random.exponential(service_rate)
-        until_next = np.random.exponential(interval_rate)
-
-        # fetch next not-full transfer time
-        next_transfer = get_transfer_time(transfer_rate, env, priority, env.now)
+        until_next = int(np.random.exponential(interval_rate))
+        service_time = int(np.random.exponential(service_rate))
+        dead_time = int(np.random.exponential(dead_rate))
         # process job
-        j = job_creator(i, env, service_time, cpu, k, transfer_rate, next_transfer - env.now, priority, env.now)
-        env.process(j)
-
+        job = Job(i + 1, env.now, service_time, priority, dead_time)
+        heapq.heappush(cpu.pq, job)
         yield env.timeout(until_next)
 
 
-def get_transfer_time(transfer_rate, env, priority, created_at):
-    cnt = int((env.now // transfer_rate) + 1)
-    next_transfer = cnt * transfer_rate
-    priority_schedule = round((0.5 ** priority) / transfer_rate, 3)
-    arrival_schedule = max(round(0.5 ** round(1 + ((next_transfer - created_at) / transfer_rate), 4) / transfer_rate, 10), 0)
-    next_transfer += priority_schedule + arrival_schedule
-    return next_transfer
+def check_dead_process(cpu):
+    while True:
+        yield env.timeout(0.9)
+        removed = 0
+        new_q = []
+        for job in cpu.pq:
+            if cpu.env.now < (job.created_time + job.life_time):
+                new_q.append(job)
+            else:
+                removed += 1
+        cpu.pq = new_q
+        heapq.heapify(cpu.pq)
 
+        new_q = []
+        for job in cpu.r1:
+            if cpu.env.now < (job.created_time + job.life_time):
+                new_q.append(job)
+            else:
+                removed += 1
+        cpu.r1 = new_q
+        heapq.heapify(cpu.r1)
 
-"""
-    priority policy:
-        - if a 
-        - the further we are from a task creation time, the higher it will be prioritized after each transfer
-        - 
-"""
+        new_q = []
+        for job in cpu.r2:
+            if cpu.env.now < (job.created_time + job.life_time):
+                new_q.append(job)
+            else:
+                removed += 1
+        cpu.r2 = new_q
+        heapq.heapify(cpu.r2)
+
+        new_q = []
+        for job in cpu.fcfs:
+            if cpu.env.now == (job.created_time + job.life_time):
+                new_q.append(job)
+            else:
+                removed += 1
+        cpu.fcfs = new_q
+        heapq.heapify(cpu.fcfs)
+
+        yield env.timeout(0.1)
 
 
 def print_stuff(time_stamp, job_id, message):
@@ -60,65 +133,35 @@ def print_stuff(time_stamp, job_id, message):
     print(message)
 
 
-def job_creator(job_id, env, s_time, cpu, k, transfer_rate, until_next_transfer, priority, created_at):
-    start = env.now
-    print_stuff(env.now, job_id,
-                'JOB SCHEDULED with priority ' + str(priority) + ' for transfer time: ' + str(
-                    until_next_transfer + start) + ' creation time: ' + str(created_at) + ' service time: ' + str(s_time))
-
-    # wait until dispatch
-    yield env.timeout(until_next_transfer)
-
-    if cpu.get_cnt() < k:
-        # Priority Queue
-        with cpu.pq.request(priority=priority) as pqreq:
-            yield pqreq
-
-        # Round-Robin-T1 queue enter on dispatch
-        with cpu.r1.request() as r1req:
-            print_stuff(env.now, job_id, 'R1 QUEUE ENTRANCE')
-            yield r1req
-            to_process = min([s_time, cpu.r1.q_time])
-            yield env.process(cpu.dispatcher(to_process, 1))
-            s_time -= to_process
-            print_stuff(env.now, job_id, 'R1 QUEUE SUCCESSFUL')
-
-        if s_time > 0:
-            # Round-Robin-T2 queue
-            with cpu.r2.request() as r2req:
-                print_stuff(env.now, job_id, 'R2 QUEUE ENTRANCE')
-                yield r2req
-                to_process = min([s_time, cpu.r2.q_time])
-                yield env.process(cpu.dispatcher(to_process, 2))
-                s_time -= to_process
-                print_stuff(env.now, job_id, 'R2 QUEUE SUCCESSFUL')
-
-        if s_time > 0:
-            # FCFS queue
-            with cpu.fcfs.request() as r2req:
-                print_stuff(env.now, job_id, 'FCFS QUEUE ENTRANCE')
-                yield r2req
-                yield env.process(cpu.dispatcher(to_process, 3))
-                print_stuff(env.now, job_id, 'FCFS QUEUE SUCCESSFUL')
-
-    else:
-        new_transfer = get_transfer_time(transfer_rate, env, priority, created_at)
-        print_stuff(env.now, job_id, 'JOB RESCHEDULING')
-        yield env.process(
-            job_creator(job_id, env, s_time, cpu, k, transfer_rate, new_transfer - env.now, priority, created_at)
-        )
+def check_pq(cpu, k, dispatcher_rate):
+    env = cpu.env
+    while True:
+        yield env.timeout(dispatcher_rate)
+        if len(cpu.pq) < k:
+            jobs = heapq.nlargest(len(cpu.pq), cpu.pq)
+            for job in jobs:
+                heapq.heappush(cpu.r1, job)
+        else:
+            jobs = heapq.nlargest(k, cpu.pq)
+            for job in jobs:
+                heapq.heappush(cpu.r1, job)
+        env.process(cpu.dispatcher())
 
 
 if __name__ == '__main__':
-    simulation_time = 1000
+    simulation_time = 60
     no_of_jobs = 50
     x = 2
     y = 30
-    z = 10
+    z = 5
     job_deploy_rate = 2
     k = 10
     t1 = 5
     t2 = 10
+    transfer_time = 30
     env = simpy.Environment()
-    env.process(job_source(env, x, y, no_of_jobs, [t1, t2], k, job_deploy_rate, simulation_time))
+    cpu = CPU(env, [t1, t2])
+    env.process(job_source(env, x, y, z, no_of_jobs, cpu))
+    env.process(check_pq(cpu, k, transfer_time))
+    env.process(check_dead_process(cpu))
     env.run(until=simulation_time)
