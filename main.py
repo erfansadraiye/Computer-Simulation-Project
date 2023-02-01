@@ -76,7 +76,7 @@ class CPU:
                     else:
                         yield env.timeout(self.r1_q_time)
                         job.service_time -= self.r1_q_time
-                        if job.service_time != 0:
+                        if job.service_time > 0:
                             heapq.heappush(self.r2, job)
                             self.r2_entrance_times[job] = env.now
                             # print_stuff(env.now, job.id, 'R2 QUEUE ENTRANCE')
@@ -99,7 +99,7 @@ class CPU:
                     else:
                         yield env.timeout(self.r2_q_time)
                         job.service_time -= self.r2_q_time
-                        if job.service_time != 0:
+                        if job.service_time > 0:
                             heapq.heappush(self.fcfs, job)
                             self.fcfs_entrance_times[job] = env.now
                             # print_stuff(env.now, job.id, 'FCFS QUEUE ENTRANCE')
