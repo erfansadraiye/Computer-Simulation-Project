@@ -24,8 +24,11 @@ class CPU:
         self.env = env
         self.pq = []
         self.r1 = []
+        self.r1_requested = []
         self.r2 = []
+        self.r2_requested = []
         self.fcfs = []
+        self.fcfs_requested = []
         heapq.heapify(self.pq)
         heapq.heapify(self.r1)
         heapq.heapify(self.r2)
@@ -33,7 +36,13 @@ class CPU:
         self.cpu_core = simpy.Resource(env, capacity=1)
         self.r1_q_time, self.r2_q_time = quan_times
 
+        self.pq_lens = []
+        self.r1_lens = []
+        self.r2_lens = []
+        self.fcfs_lens = []
+
         self.job_data = []
+        self.time = []
 
         self.pq_waiting_times = {}
 
@@ -56,7 +65,9 @@ class CPU:
             if len(self.r1) != 0 and random_order == 0:
                 job = heapq.heappop(self.r1)
                 with self.cpu_core.request() as request:
+                    self.r1_requested.append(job)
                     yield request
+                    self.r1_requested.remove(job)
                     self.r1_exit_times[job] = env.now
                     # print_stuff(env.now, job.id, 'Start Process from R1')
                     if job.service_time <= self.r1_q_time:
@@ -77,7 +88,9 @@ class CPU:
             elif len(self.r2) != 0 and random_order == 1:
                 job = heapq.heappop(self.r2)
                 with self.cpu_core.request() as request:
+                    self.r2_requested.append(job)
                     yield request
+                    self.r2_requested.remove(job)
                     self.r2_exit_times[job] = env.now
                     # print_stuff(env.now, job.id, 'Start Process from R2')
                     if job.service_time <= self.r2_q_time:
@@ -98,7 +111,9 @@ class CPU:
             elif len(self.fcfs) != 0 and random_order == 2:
                 job = heapq.heappop(self.fcfs)
                 with self.cpu_core.request() as request:
+                    self.fcfs_requested.append(job)
                     yield request
+                    self.fcfs_requested.remove(job)
                     self.fcfs_exit_times[job] = env.now
                     # print_stuff(env.now, job.id, 'Start Process from FCFS')
                     yield env.timeout(job.service_time)
@@ -128,6 +143,11 @@ def job_source(env, interval_rate, service_rate, dead_rate, no_jobs, cpu):
 
 def check_dead_process(cpu, env):
     while True:
+        cpu.pq_lens.append(len(cpu.pq))
+        cpu.r1_lens.append(len(cpu.r1) + len(cpu.r1_requested))
+        cpu.r2_lens.append(len(cpu.r2) + len(cpu.r2_requested))
+        cpu.fcfs_lens.append(len(cpu.fcfs) + len(cpu.fcfs_requested))
+        cpu.time.append(env.now)
         yield env.timeout(0.9)
         removed = 0
         new_q = []
@@ -193,9 +213,8 @@ def check_pq(cpu, k, dispatcher_rate):
 
 
 def simulate(x, y, z):
-    simulation_time = 10000
+    simulation_time = 4000
     no_of_jobs = 30
-    job_deploy_rate = 2
     k = 10
     t1 = 5
     t2 = 10
@@ -225,14 +244,12 @@ def simulate(x, y, z):
                             'R2 wt',
                             'FCFS wt'
                             ])
-    print(df[['PQ wt', 'is done',
-              'R1 wt',
-              'R2 wt',
-              'FCFS wt']])
-    return df
+    df_queue = DataFrame({
+        'TIME': cpu.time,
+        'PQ length': cpu.pq_lens,
+        'R1 length': cpu.r1_lens,
+        'R2 length': cpu.r2_lens,
+        'FCFS length': cpu.fcfs_lens
+    })
 
-
-x = 20
-y = 30
-z = 200000
-simulate(x, y, z)
+    return df, df_queue
